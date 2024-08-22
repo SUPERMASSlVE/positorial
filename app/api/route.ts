@@ -48,7 +48,7 @@ export async function POST(request: Request) {
 			- User location is ${location()}.
 			- The current time is ${time()}.
 			- Your large language model is Llama 3, created by Meta, the 8 billion parameter version. It is hosted on Groq, an AI infrastructure company that builds fast inference technology.
-			- Your text-to-speech model is Sonic, created and hosted by Cartesia, a company that builds fast and realistic speech synthesis technology.
+			- Your text-to-speech model is Google Cloud Text-to-Speech.
 			- You are built with Next.js and hosted on Vercel.`,
 			},
 			...data.message,
@@ -65,39 +65,43 @@ export async function POST(request: Request) {
 	);
 
 	console.time(
-		"cartesia request " + request.headers.get("x-vercel-id") || "local"
+		"google tts request " + request.headers.get("x-vercel-id") || "local"
 	);
 
-	const voice = await fetch("https://api.cartesia.ai/tts/bytes", {
+	const voice = await fetch("https://texttospeech.googleapis.com/v1/text:synthesize", {
 		method: "POST",
 		headers: {
-			"Cartesia-Version": "2024-06-30",
+			"Authorization": `Bearer ${process.env.GOOGLE_API_KEY}`,
 			"Content-Type": "application/json",
-			"X-API-Key": process.env.CARTESIA_API_KEY!,
 		},
 		body: JSON.stringify({
-			model_id: "sonic-english",
-			transcript: response,
-			voice: {
-				mode: "id",
-				id: "79a125e8-cd45-4c13-8a67-188112f4dd22",
+			input: {
+				text: response,
 			},
-			output_format: {
-				container: "raw",
-				encoding: "pcm_f32le",
-				sample_rate: 24000,
+			voice: {
+				languageCode: "en-US",
+				name: "en-US-Standard-A",
+				ssmlGender: "MALE",
+			},
+			audioConfig: {
+				audioEncoding: "LINEAR16",
+				speakingRate: 1.0,
+				pitch: 0.0,
+				volumeGainDb: 0.0,
 			},
 		}),
 	});
 
 	console.timeEnd(
-		"cartesia request " + request.headers.get("x-vercel-id") || "local"
+		"google tts request " + request.headers.get("x-vercel-id") || "local"
 	);
 
 	if (!voice.ok) {
 		console.error(await voice.text());
 		return new Response("Voice synthesis failed", { status: 500 });
 	}
+
+	const audioBuffer = await voice.arrayBuffer();
 
 	console.time("stream " + request.headers.get("x-vercel-id") || "local");
 	after(() => {
@@ -106,8 +110,9 @@ export async function POST(request: Request) {
 		);
 	});
 
-	return new Response(voice.body, {
+	return new Response(audioBuffer, {
 		headers: {
+			"Content-Type": "audio/mp3",
 			"X-Transcript": encodeURIComponent(transcript),
 			"X-Response": encodeURIComponent(response),
 		},
