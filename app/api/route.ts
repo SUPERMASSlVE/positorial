@@ -3,6 +3,7 @@ import { headers } from "next/headers";
 import { z } from "zod";
 import { zfd } from "zod-form-data";
 import { unstable_after as after } from "next/server";
+import { GoogleAuth } from 'google-auth-library';
 
 const groq = new Groq();
 
@@ -27,12 +28,8 @@ export async function POST(request: Request) {
 	const transcript = await getTranscript(data.input);
 	if (!transcript) return new Response("Invalid audio", { status: 400 });
 
-	console.timeEnd(
-		"transcribe " + request.headers.get("x-vercel-id") || "local"
-	);
-	console.time(
-		"text completion " + request.headers.get("x-vercel-id") || "local"
-	);
+	console.timeEnd("transcribe " + request.headers.get("x-vercel-id") || "local");
+	console.time("text completion " + request.headers.get("x-vercel-id") || "local");
 
 	const completion = await groq.chat.completions.create({
 		model: "llama3-8b-8192",
@@ -60,61 +57,50 @@ export async function POST(request: Request) {
 	});
 
 	const response = completion.choices[0].message.content;
-	console.timeEnd(
-		"text completion " + request.headers.get("x-vercel-id") || "local"
-	);
+	console.timeEnd("text completion " + request.headers.get("x-vercel-id") || "local");
 
-	console.time(
-		"google tts request " + request.headers.get("x-vercel-id") || "local"
-	);
+	console.time("google tts request " + request.headers.get("x-vercel-id") || "local");
 
 	const voice = await fetch("https://texttospeech.googleapis.com/v1/text:synthesize", {
 		method: "POST",
 		headers: {
-			"Authorization": `Bearer ${process.env.GOOGLE_API_KEY}`,
-			"Content-Type": "application/json",
+			"Content-Type": "application/json; charset=utf-8",
+			Authorization: `Bearer ${await getGoogleCloudAccessToken()}`, 
 		},
 		body: JSON.stringify({
 			input: {
-				text: response,
+				text: response, 
 			},
 			voice: {
 				languageCode: "en-US",
-				name: "en-US-Standard-A",
-				ssmlGender: "MALE",
+				name: "en-US-Neural2-J", // You can choose other voices here
 			},
 			audioConfig: {
-				audioEncoding: "LINEAR16",
-				speakingRate: 1.0,
-				pitch: 0.0,
-				volumeGainDb: 0.0,
+				audioEncoding: "LINEAR16", 
+				sampleRateHertz: 24000,
 			},
 		}),
 	});
 
-	console.timeEnd(
-		"google tts request " + request.headers.get("x-vercel-id") || "local"
-	);
+	console.timeEnd("google tts request " + request.headers.get("x-vercel-id") || "local");
 
 	if (!voice.ok) {
 		console.error(await voice.text());
 		return new Response("Voice synthesis failed", { status: 500 });
 	}
 
-	const audioBuffer = await voice.arrayBuffer();
+	const voiceData = await voice.json(); 
 
 	console.time("stream " + request.headers.get("x-vercel-id") || "local");
 	after(() => {
-		console.timeEnd(
-			"stream " + request.headers.get("x-vercel-id") || "local"
-		);
+		console.timeEnd("stream " + request.headers.get("x-vercel-id") || "local");
 	});
 
-	return new Response(audioBuffer, {
+	return new Response(Buffer.from(voiceData.audioContent, "base64"), { 
 		headers: {
-			"Content-Type": "audio/mp3",
 			"X-Transcript": encodeURIComponent(transcript),
 			"X-Response": encodeURIComponent(response),
+			"Content-Type": "audio/wav", // Google Cloud TTS default format
 		},
 	});
 }
@@ -150,4 +136,14 @@ async function getTranscript(input: string | File) {
 	} catch {
 		return null; // Empty audio file
 	}
+}
+
+async function getGoogleCloudAccessToken() {
+    const auth = new GoogleAuth({
+        scopes: 'https://www.googleapis.com/auth/cloud-platform', // Required scopes
+        keyFile: process.env.GOOGLE_APPLICATION_CREDENTIALS // Set to the path to your keyfile.json
+    });
+    const client = await auth.getClient();
+    const accessToken = (await client.getAccessToken()).token;
+    return accessToken;
 }
