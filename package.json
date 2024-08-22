@@ -9,7 +9,7 @@
 		"lint": "next lint"
 	},
 	"dependencies": {
-		"google-auth-library": "^7.14.1",
+		"google-auth-library": "^9.14.0",
 		"@ricky0123/vad-react": "^0.0.24",
 		"@ricky0123/vad-web": "^0.0.18",
 		"@vercel/analytics": "^1.2.2",
